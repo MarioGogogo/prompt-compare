@@ -1,0 +1,96 @@
+import DemoChatStream from './DemoChatStream.vue'
+
+// PROMPT 04 · 像有人在打字 STREAM — AI 聊天流式回复
+export const streamCase = {
+    id: 'stream',
+    index: '04',
+    title: '像有人在打字',
+    codename: 'STREAM',
+    tags: [
+        '[场景: AI 聊天流式回复]',
+        '[核心: 思考点 + 按词淡入]',
+        '[动效: 透明 4px 模糊变清晰]',
+        '[体验: 光标跟随 · 平滑到底]',
+    ],
+    devices: ['mobile'],
+    promptText:
+        '做一个 AI 聊天回复：发送后立刻出现回复气泡，里面 3 个小点呼吸跳动表示"正在思考"；开始回复后按词（中文 2–4 个字一段）一段段淡入，每段从透明、4px 模糊变清晰，末尾一个闪烁光标跟着走；气泡高度平滑长高，页面平滑跟随到底部；用户手动往上滑就停止跟随，滑回底部再恢复。',
+    promptSegments: [
+        { t: '做一个' },
+        { t: 'AI 聊天回复', hl: true },
+        { t: '：发送后' },
+        { t: '立刻出现回复气泡', hl: true },
+        { t: '，里面' },
+        { t: '3 个小点呼吸跳动', hl: true },
+        { t: '表示"正在思考"；开始回复后' },
+        { t: '按词（中文 2–4 个字一段）', hl: true },
+        { t: '一段段淡入，每段从' },
+        { t: '透明、4px 模糊变清晰', hl: true, mono: true },
+        { t: '，末尾一个' },
+        { t: '闪烁光标跟着走', hl: true },
+        { t: '；' },
+        { t: '气泡高度平滑长高', hl: true },
+        { t: '，' },
+        { t: '页面平滑跟随到底部', hl: true },
+        { t: '；用户手动往上滑就停止跟随，滑回底部再恢复。', hl: true },
+    ],
+    metrics: [
+        { icon: 'psychology', tone: 'indigo', label: '等待反馈', value: '立刻出气泡 · 3 点呼吸思考态' },
+        { icon: 'blur_on', tone: 'emerald', label: '文字进场', value: '按词淡入 · 4px 模糊化清晰' },
+        { icon: 'vertical_align_bottom', tone: 'amber', label: '滚动跟随', value: '平滑到底 · 上滑即停' },
+    ],
+    pills: {
+        baseline: '无提示词 / 泛化指令 (“做一个 AI 聊天，回复用打字机效果”)',
+        optimized: '结构化提示词 (3 点呼吸思考 + 按词模糊淡入 + 光标跟随 + 平滑到底)',
+    },
+    analysis: {
+        pain: '“做一个 AI 聊天，回复用打字机效果”——发送后没有任何"正在思考"的反馈，用户冷等、不知道 AI 在不在；回复一个字一个字硬蹦，没有语义节奏，换行时气泡高度猛地一跳，页面跟随生硬，整个对话像机器在念稿，而不是有人在对面打字。',
+        gain: '发送后立刻出现回复气泡，里面 3 个小点呼吸跳动表示"正在思考"；开始回复后按词（2–4 个字一段）一段段淡入，每段从透明、4px 模糊变清晰，末尾一个闪烁光标跟着走；气泡高度平滑长高，页面平滑跟随到底部，像真人在对面一边想一边打字。',
+    },
+    valueCards: [
+        {
+            icon: 'psychology',
+            tone: 'indigo',
+            title: '思考态先行 (Thinking Dots)',
+            bodyParts: [
+                { t: '发送后' },
+                { t: '立刻出现回复气泡', hl: true, tone: 'indigo' },
+                { t: '，里面 ' },
+                { t: '3 个小点呼吸跳动', hl: true, tone: 'indigo' },
+                { t: ' 表示"正在思考"，用户从第一毫秒就知道 AI 收到了、正在忙。' },
+            ],
+            foot: { icon: 'timer', text: '发送 → 首个反馈延迟 ≈ 0' },
+        },
+        {
+            icon: 'blur_on',
+            tone: 'emerald',
+            title: '按词淡入 (Word Fade-in)',
+            bodyParts: [
+                { t: '开始回复后' },
+                { t: '按词（中文 2–4 个字一段）', hl: true, tone: 'emerald' },
+                { t: ' 一段段淡入，每段从' },
+                { t: '透明、4px 模糊变清晰', hl: true, tone: 'emerald', mono: true },
+                { t: '，末尾一个' },
+                { t: '闪烁光标', hl: true, tone: 'emerald' },
+                { t: ' 跟着走，有语义节奏，像人在打字。' },
+            ],
+            foot: { icon: 'tonality', text: '模糊 4px → 0 · 词段 2–4 字' },
+        },
+        {
+            icon: 'vertical_align_bottom',
+            tone: 'amber',
+            title: '稳态跟随 (Smooth Follow)',
+            bodyParts: [
+                { t: '气泡高度' },
+                { t: '平滑长高', hl: true, tone: 'amber' },
+                { t: '，页面' },
+                { t: '平滑跟随到底部', hl: true, tone: 'amber' },
+                { t: '；用户手动往上滑就' },
+                { t: '停止跟随', hl: true },
+                { t: '，滑回底部再恢复，阅读永远不被打扰。' },
+            ],
+            foot: { icon: 'swap_vert', text: '跟随可中断 · 可恢复 · 0 跳动' },
+        },
+    ],
+    demo: DemoChatStream,
+}
