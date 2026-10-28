@@ -2,6 +2,8 @@ import { shimmerCase } from '../cases/shimmer/index.js'
 import { blurCase } from '../cases/blur/index.js'
 import { prefetchCase } from '../cases/prefetch/index.js'
 import { streamCase } from '../cases/stream/index.js'
+import { confettiCase } from '../cases/confetti/index.js'
+import { disintegrateCase } from '../cases/disintegrate/index.js'
 
 /**
  * 案例注册表 —— 新增提示词案例只需：
@@ -14,6 +16,8 @@ export const cases = [
     { ...blurCase },
     { ...prefetchCase },
     { ...streamCase },
+    { ...confettiCase },
+    { ...disintegrateCase },
 ]
 
 export function getCase(id) {
