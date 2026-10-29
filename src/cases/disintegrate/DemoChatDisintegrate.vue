@@ -15,16 +15,20 @@ const props = defineProps({
     },
 })
 
-const menuOn = ref(false) // 长按弹出的操作菜单（复制 / 删除）
-const pressed = ref(false) // 长按按压态（气泡压暗）
-const fadeOut = ref(false) // naive：整条气泡一起淡掉
-const collapsed = ref(false) // 主角气泡占位塌陷（naive 瞬间 / optimized 300ms 过渡）
-const erasePct = ref(0) // optimized：气泡从左往右被擦掉的进度 0-100
-const wrapH = ref(46) // 主角气泡 wrapper 高度（塌陷动画用）
+// 两幕演示：第一幕删除文字气泡「等我挑一下」，复位后再演第二幕删除海边日落照片
+const menuOn = ref(null) // 'text' | 'photo'：长按弹出的操作菜单挂在哪个主角上
+const pressedTarget = ref(null) // 长按按压态（对应主角压暗）
+const actCur = ref(null) // 当前删除动画目标 'text' | 'photo'
+const fadeOut = ref(false) // naive：整条一起淡掉
+const collapsed = ref(false) // 当前目标占位塌陷（naive 瞬间 / optimized 300ms 过渡）
+const textH = ref(46) // 文字气泡 wrapper 高度（塌陷动画用）
+const photoH = ref(128) // 照片 wrapper 高度（塌陷动画用）
 
 const wrap = ref(null)
 const bubble = ref(null)
 const bubbleWrap = ref(null)
+const photoEl = ref(null)
+const photoWrap = ref(null)
 const canvas = ref(null)
 
 const SWEEP = 900 // 风扫：从左往右 0.8s 扫完（留一点余量）
@@ -36,7 +40,6 @@ let particles = []
 let ctx = null
 let dpr = 1
 let last = 0
-let sweepStart = 0
 
 function later(fn, ms) {
     timers.push(setTimeout(fn, ms))
@@ -48,58 +51,32 @@ function clearTimers() {
 }
 
 function measure() {
-    if (bubbleWrap.value) wrapH.value = bubbleWrap.value.offsetHeight
+    if (bubbleWrap.value) textH.value = bubbleWrap.value.offsetHeight
+    if (photoWrap.value) photoH.value = photoWrap.value.offsetHeight
 }
 
-// ---------- 碎沙粒子：离屏渲染气泡 → 按像素采样 → 每粒取原位置颜色 ----------
-function makeSand() {
-    const cv = canvas.value
-    const b = bubble.value
-    const root = wrap.value
-    if (!cv || !b || !root) return
-    dpr = window.devicePixelRatio || 1
-    cv.width = root.clientWidth * dpr
-    cv.height = root.clientHeight * dpr
-    ctx = cv.getContext('2d')
+// wrapper 样式：target 是当前删除目标且已塌陷 → 高度收到 0（补位）；否则固定高度
+function wrapStyle(target) {
+    const trans = props.optimized ? 'height 0.3s ease, margin-bottom 0.3s ease' : 'none'
+    if (actCur.value === target && collapsed.value) {
+        return { height: '0px', marginBottom: '0px', overflow: 'hidden', opacity: 0, transition: trans }
+    }
+    return { height: (target === 'text' ? textH.value : photoH.value) + 'px', transition: trans }
+}
 
-    const br = b.getBoundingClientRect()
-    const rr = root.getBoundingClientRect()
-    const bx = br.left - rr.left
-    const by = br.top - rr.top
-    const bw = br.width
-    const bh = br.height
+// optimized：本体删除瞬间隐藏，由粒子原位接管显示（错落起飞形成参差的消失边界）
+function clipStyle(target) {
+    if (props.optimized && actCur.value === target) {
+        return { visibility: 'hidden' }
+    }
+    return {}
+}
 
-    // 离屏画气泡本体：蓝色圆角矩形 + 白色文字（右下角小圆角，同气泡样式）
-    const s = 2 // 放大采样，文字边缘更清晰
-    const off = document.createElement('canvas')
-    off.width = bw * s
-    off.height = bh * s
-    const o = off.getContext('2d')
-    o.scale(s, s)
-    const r = 13
-    const rb = 4
-    o.beginPath()
-    o.moveTo(r, 0)
-    o.lineTo(bw - r, 0)
-    o.arcTo(bw, 0, bw, r, r)
-    o.lineTo(bw, bh - rb)
-    o.arcTo(bw, bh, bw - rb, bh, rb)
-    o.lineTo(r, bh)
-    o.arcTo(0, bh, 0, bh - r, r)
-    o.lineTo(0, r)
-    o.arcTo(0, 0, r, 0, r)
-    o.closePath()
-    o.fillStyle = '#2e6bf6'
-    o.fill()
-    o.fillStyle = '#ffffff'
-    o.font = '500 11.5px -apple-system, "PingFang SC", "Noto Sans SC", sans-serif'
-    o.textBaseline = 'middle'
-    o.fillText('等我挑一下', 12, bh / 2 + 0.5)
-
-    // 按像素网格采样 → 一粒粒小沙
-    const img = o.getImageData(0, 0, off.width, off.height).data
-    const step = 1.4 * s
-    const now = performance.now()
+// ---------- 碎沙粒子：把删除目标渲染到离屏 canvas → 按像素采样 → 每粒取原位置颜色 ----------
+function samplePixels(off, s, bx, by, bw, bh, { step: stepCss, szBase, szSpread, spd = 1 }) {
+    const img = off.getContext('2d').getImageData(0, 0, off.width, off.height).data
+    const step = stepCss * s
+    const born = performance.now()
     for (let py = 0; py < off.height; py += step) {
         for (let px = 0; px < off.width; px += step) {
             const i = ((py | 0) * off.width + (px | 0)) * 4
@@ -110,30 +87,90 @@ function makeSand() {
                     ox: bx + lx,
                     oy: by + ly,
                     c: `rgb(${img[i]},${img[i + 1]},${img[i + 2]})`,
-                    // 从左往右依次散开（像一阵风扫过）：左边的粒先起飞
-                    delay: (lx / bw) * SWEEP + Math.random() * 70,
-                    vx: 26 + Math.random() * 62, // 往右上方飘走
-                    vy: -(14 + Math.random() * 58),
+                    // 从左往右依次散开，但前沿错落：列位置 ±28% 抖动 + 随机 ±75ms，
+                    // 少数粒提前飞走、少数滞后残留，擦除边界参差不齐（像被风撕开）
+                    delay: (lx / bw) * SWEEP * (0.72 + Math.random() * 0.56) + (Math.random() - 0.5) * 150,
+                    vx: (26 + Math.random() * 62) * spd, // 往右上方飘走
+                    vy: -(14 + Math.random() * 58) * spd,
                     jf: 5 + Math.random() * 7, // 随机抖动
                     jp: Math.random() * Math.PI * 2,
-                    sz: 1.1 + Math.random() * 0.9,
-                    born: now,
+                    sz: szBase + Math.random() * szSpread,
+                    born,
                 })
             }
         }
     }
 }
 
-// rAF：驱动擦除进度 + 沙粒物理（右上飘 + 抖动 + 变小变淡）
+function makeSand(target) {
+    const cv = canvas.value
+    const root = wrap.value
+    const el = target === 'text' ? bubble.value : photoEl.value
+    if (!cv || !root || !el) return
+    dpr = window.devicePixelRatio || 1
+    cv.width = root.clientWidth * dpr
+    cv.height = root.clientHeight * dpr
+    ctx = cv.getContext('2d')
+
+    const br = el.getBoundingClientRect()
+    const rr = root.getBoundingClientRect()
+    const bx = br.left - rr.left
+    const by = br.top - rr.top
+    const bw = br.width
+    const bh = br.height
+    const s = 2 // 放大采样，边缘更清晰
+
+    if (target === 'text') {
+        // 离屏画文字气泡：蓝色圆角矩形 + 白色文字（右下角小圆角，同气泡样式）
+        const off = document.createElement('canvas')
+        off.width = bw * s
+        off.height = bh * s
+        const o = off.getContext('2d')
+        o.scale(s, s)
+        const r = 13
+        const rb = 4
+        o.beginPath()
+        o.moveTo(r, 0)
+        o.lineTo(bw - r, 0)
+        o.arcTo(bw, 0, bw, r, r)
+        o.lineTo(bw, bh - rb)
+        o.arcTo(bw, bh, bw - rb, bh, rb)
+        o.lineTo(r, bh)
+        o.arcTo(0, bh, 0, bh - r, r)
+        o.lineTo(0, r)
+        o.arcTo(0, 0, r, 0, r)
+        o.closePath()
+        o.fillStyle = '#2e6bf6'
+        o.fill()
+        o.fillStyle = '#ffffff'
+        o.font = '500 11.5px -apple-system, "PingFang SC", "Noto Sans SC", sans-serif'
+        o.textBaseline = 'middle'
+        o.fillText('等我挑一下', 12, bh / 2 + 0.5)
+        samplePixels(off, s, bx, by, bw, bh, { step: 1.4, szBase: 1.1, szSpread: 0.9 }) // ≈1400 粒小沙
+    } else {
+        // 离屏画照片：SVG 转 data URL 绘制，3.0px 网格采样成大像素块（错落的 Thanos 式碎裂感）
+        const img = new Image()
+        img.onload = () => {
+            const off = document.createElement('canvas')
+            off.width = bw * s
+            off.height = bh * s
+            const o = off.getContext('2d')
+            o.scale(s, s)
+            o.drawImage(img, 0, 0, bw, bh)
+            samplePixels(off, s, bx, by, bw, bh, { step: 3.0, szBase: 2.6, szSpread: 2.8, spd: 0.82 })
+        }
+        img.src =
+            'data:image/svg+xml;charset=utf-8,' +
+            encodeURIComponent(photoSvg({ w: Math.round(bw), h: Math.round(bh) }))
+    }
+}
+
+// rAF：沙粒物理（原位等待 → 错落起飞 → 右上飘 + 抖动 + 变小变淡）
 function tick(now) {
     const cv = canvas.value
     if (cv && ctx) {
         const dt = Math.min(48, now - (last || now)) / 1000
         last = now
-        if (sweepStart) {
-            const el = now - sweepStart
-            erasePct.value = Math.min(100, (el / SWEEP) * 100)
-        }
         const W = cv.width / dpr
         const H = cv.height / dpr
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
@@ -142,8 +179,13 @@ function tick(now) {
         for (const p of particles) {
             const t = (now - p.born - p.delay) / 1000 // 该粒已飞行秒数
             if (t < 0) {
+                // 还没被风扫到：原位显示（本体已隐藏，由粒子拼出原样；
+                // 起飞时刻错落 → 消失边界参差，不是一条直线）
+                ctx.globalAlpha = 1
+                ctx.fillStyle = p.c
+                ctx.fillRect(p.ox, p.oy, p.sz, p.sz)
                 alive.push(p)
-                continue // 还没被风扫到：先不画（气泡本体还在）
+                continue
             }
             const a = t / (LIFE / 1000) // 生命进度 0→1
             if (a >= 1) continue
@@ -164,65 +206,85 @@ function tick(now) {
     raf = requestAnimationFrame(tick)
 }
 
+// 单幕流程：长按 → 点"删除" → 碎沙/淡掉 → 补位
+function stage(target, tMenu, tDel, tCollapse) {
+    later(() => {
+        pressedTarget.value = target
+        menuOn.value = target
+        // 菜单期测量 wrapper 高度（此时无塌陷、无过渡，测量安全；
+        // 不能在复位时测——optimized 恢复有 0.3s 高度过渡，会测到 ~0 污染高度）
+        nextTick(measure)
+    }, tMenu)
+    later(() => {
+        menuOn.value = null
+        pressedTarget.value = null
+        actCur.value = target
+        if (props.optimized) {
+            makeSand(target)
+            later(() => {
+                // 散开近尾声：占位平滑塌陷 → 下面消息 300ms 上移补位
+                collapsed.value = true
+            }, tCollapse - tDel)
+        } else {
+            // 一句话做的：整条一起淡掉
+            fadeOut.value = true
+            later(() => {
+                collapsed.value = true // 占位瞬间塌陷，下面消息生硬跳位
+            }, 320)
+        }
+    }, tDel)
+}
+
+// 幕间复位：被删的主角恢复，准备下一幕（不测量——高度已在菜单期测好）
+function resetAct() {
+    actCur.value = null
+    collapsed.value = false
+    fadeOut.value = false
+    particles = []
+}
+
 onMounted(() => {
-    // 两侧组件周期一致、相位同步（CYCLE = 8.6s）：
-    // t=0.7s   长按"等我挑一下"气泡 → 弹出菜单（复制 / 删除），气泡压暗
+    // 两侧组件周期一致、相位同步（CYCLE = 12.6s），先删文字、再删照片：
+    // 第一幕 · 删文字气泡「等我挑一下」
+    // t=0.7s   长按气泡 → 弹出菜单（复制 / 删除），气泡压暗
     // t=2.1s   点"删除"：
     //          左(naive)  = 整条气泡一起淡掉（0.3s），占位瞬间塌陷，下面消息生硬跳上来
     //          右(optimized) = 气泡按像素拆成约 1500 粒小沙，从左往右 0.9s 扫完，
     //                          每粒往右上方飘走带随机抖动、边飘边变小变淡约 1s 消失；
     //                          同时原气泡从左往右被一点点擦掉（不整条消失）
     // t=3.2s   右=散开近尾声 → 占位 300ms 平滑塌陷，下面消息平滑上移补位
-    // t≈4.0s   右=沙粒全部消散，画面干净
-    // t=8.6s   复位循环
+    // t≈4.1s   右=沙粒全部消散
+    // t=5.8s   第一幕复位（气泡恢复），随后进入第二幕
+    // 第二幕 · 删除海边日落照片
+    // t=6.8s   长按照片 → 菜单，照片压暗
+    // t=8.2s   点"删除"：照片按像素拆成沙粒（同上节奏），左→右擦除 + 300ms 补位
+    // t≈10.2s  照片沙粒全部消散
+    // t=12.6s  复位循环
     nextTick(measure)
     raf = requestAnimationFrame(tick)
 
-    const T_MENU = 700
-    const T_DEL = 2100
-    const T_COLLAPSE = 3200
-    const CYCLE = 8600
+    stage('text', 700, 2100, 3200)
+    later(resetAct, 5800)
+    stage('photo', 6800, 8200, 9300)
+    later(() => {
+        // 复位循环
+        menuOn.value = null
+        pressedTarget.value = null
+        resetAct()
+        loop()
+    }, 12600)
 
-    const loop = () => {
+    function loop() {
+        stage('text', 700, 2100, 3200)
+        later(resetAct, 5800)
+        stage('photo', 6800, 8200, 9300)
         later(() => {
-            pressed.value = true
-            menuOn.value = true
-        }, T_MENU)
-
-        later(() => {
-            // 点"删除"
-            menuOn.value = false
-            pressed.value = false
-            if (props.optimized) {
-                makeSand()
-                sweepStart = performance.now()
-                later(() => {
-                    // 散开近尾声：占位平滑塌陷 → 下面消息 300ms 上移补位
-                    collapsed.value = true
-                }, T_COLLAPSE - T_DEL)
-            } else {
-                // 一句话做的：整条一起淡掉
-                fadeOut.value = true
-                later(() => {
-                    collapsed.value = true // 占位瞬间塌陷，下面消息生硬跳位
-                }, 320)
-            }
-        }, T_DEL)
-
-        later(() => {
-            // 复位
-            menuOn.value = false
-            pressed.value = false
-            fadeOut.value = false
-            collapsed.value = false
-            erasePct.value = 0
-            sweepStart = 0
-            particles = []
-            nextTick(measure)
+            menuOn.value = null
+            pressedTarget.value = null
+            resetAct()
             loop()
-        }, CYCLE)
+        }, 12600)
     }
-    loop()
 })
 
 onBeforeUnmount(() => {
@@ -249,8 +311,12 @@ const avatarSvg = `
 </svg>`
 
 // 海边日落照片（内联 SVG：粉紫黄昏 + 落日 + 海浪白沫 + 沙滩）
-const photoSvg = `
-<svg viewBox="0 0 232 156" class="w-full h-full" preserveAspectRatio="xMidYMid slice">
+// dims 传入尺寸时输出 width/height 属性（碎沙采样用 data URL 绘制需要），否则自适应容器
+// xmlns 必须带：data URL 方式加载 SVG 时没有命名空间会直接解析失败（内联显示则无影响）
+function photoSvg(dims) {
+    const attr = dims ? `width="${dims.w}" height="${dims.h}"` : ''
+    return `
+<svg xmlns="http://www.w3.org/2000/svg" ${attr} viewBox="0 0 232 156" preserveAspectRatio="xMidYMid slice" class="w-full h-full">
   <defs>
     <linearGradient id="dsky" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#33205c"/>
@@ -284,6 +350,7 @@ const photoSvg = `
   <ellipse cx="60" cy="106" rx="10" ry="1.6" fill="#ffe0b0" opacity="0.7"/>
   <ellipse cx="176" cy="104" rx="8" ry="1.4" fill="#ffe0b0" opacity="0.6"/>
 </svg>`
+}
 </script>
 
 <template>
@@ -322,13 +389,10 @@ const photoSvg = `
                     </div>
                 </div>
 
-                <!-- ★ 主角：「等我挑一下」—— 长按删除，碎成沙子 -->
-                <div ref="bubbleWrap" class="relative flex justify-end mb-2.5 origin-bottom transition-all"
-                    :style="collapsed
-                        ? { height: '0px', marginBottom: '0px', overflow: 'hidden', opacity: 0, transition: props.optimized ? 'height 0.3s ease, margin-bottom 0.3s ease' : 'none' }
-                        : { height: wrapH + 'px', transition: props.optimized ? 'height 0.3s ease, margin-bottom 0.3s ease' : 'none' }">
+                <!-- ★ 第一幕主角：「等我挑一下」—— 长按删除，碎成沙子 -->
+                <div ref="bubbleWrap" class="relative flex justify-end mb-2.5" :style="wrapStyle('text')">
                     <!-- 长按菜单（两侧都有，差异在删除后的表现） -->
-                    <div v-if="menuOn"
+                    <div v-if="menuOn === 'text'"
                         class="menu-pop absolute bottom-[calc(100%+7px)] right-1 z-30 flex flex-col rounded-[10px] bg-[#48494e] shadow-[0_6px_20px_rgba(0,0,0,0.5)] overflow-hidden">
                         <div class="px-5 py-[7px] text-[11.5px] text-gray-200 border-b border-white/[0.08]">复制</div>
                         <div class="px-5 py-[7px] text-[11.5px] text-[#fa5151] font-medium">删除</div>
@@ -336,10 +400,10 @@ const photoSvg = `
                     <div ref="bubble"
                         class="rounded-[14px] rounded-br-[4px] bg-[#2e6bf6] px-3 py-2 text-[11.5px] leading-[1.55] text-white"
                         :class="[
-                            pressed ? 'brightness-[0.72]' : '',
-                            fadeOut ? 'naive-fade' : '',
+                            pressedTarget === 'text' ? 'brightness-[0.72]' : '',
+                            fadeOut && actCur === 'text' ? 'naive-fade' : '',
                         ]"
-                        :style="props.optimized ? { clipPath: `inset(0 0 0 ${erasePct}%)` } : {}">
+                        :style="clipStyle('text')">
                         等我挑一下
                     </div>
                 </div>
@@ -351,9 +415,20 @@ const photoSvg = `
                     </div>
                 </div>
 
-                <!-- 我：海边日落照片 -->
-                <div class="flex justify-end mb-2.5">
-                    <div class="w-[176px] h-[118px] rounded-[14px] rounded-br-[4px] overflow-hidden bg-[#241c3e]" v-html="photoSvg"></div>
+                <!-- ★ 第二幕主角：海边日落照片 —— 长按删除，碎成沙子 -->
+                <div ref="photoWrap" class="relative flex justify-end mb-2.5" :style="wrapStyle('photo')">
+                    <div v-if="menuOn === 'photo'"
+                        class="menu-pop absolute bottom-[calc(100%+7px)] right-1 z-30 flex flex-col rounded-[10px] bg-[#48494e] shadow-[0_6px_20px_rgba(0,0,0,0.5)] overflow-hidden">
+                        <div class="px-5 py-[7px] text-[11.5px] text-gray-200 border-b border-white/[0.08]">复制</div>
+                        <div class="px-5 py-[7px] text-[11.5px] text-[#fa5151] font-medium">删除</div>
+                    </div>
+                    <div ref="photoEl"
+                        class="w-[176px] h-[118px] rounded-[14px] rounded-br-[4px] overflow-hidden bg-[#241c3e]"
+                        :class="[
+                            pressedTarget === 'photo' ? 'brightness-[0.72]' : '',
+                            fadeOut && actCur === 'photo' ? 'naive-fade' : '',
+                        ]"
+                        :style="clipStyle('photo')" v-html="photoSvg()"></div>
                 </div>
 
                 <!-- 阿杰：这张绝了！ -->
@@ -390,7 +465,7 @@ const photoSvg = `
 </template>
 
 <style scoped>
-/* naive：整条气泡一起淡掉（"只会淡掉，不会碎"） */
+/* naive：整条一起淡掉（"只会淡掉，不会碎"） */
 .naive-fade {
     animation: wholeFade 0.3s ease-out both;
 }
